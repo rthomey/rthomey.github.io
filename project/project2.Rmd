@@ -1,0 +1,228 @@
+---
+title: 'Project 2: Back Pain'
+author: "Reagan Thomey rt24549"
+date: "11/22/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, eval = TRUE, fig.align = "center", warning = F, message = F,
+tidy=TRUE, tidy.opts=list(width.cutoff=60), R.options=list(max.print=100))
+
+class_diag<-function(probs,truth){
+  tab<-table(factor(probs>.5,levels=c("FALSE","TRUE")),truth)
+  acc=sum(diag(tab))/sum(tab)
+  sens=tab[2,2]/colSums(tab)[2]
+  spec=tab[1,1]/colSums(tab)[1]
+  ppv=tab[2,2]/rowSums(tab)[2]
+  f1=2*(sens*ppv)/(sens+ppv)
+
+  if(is.numeric(truth)==FALSE & is.logical(truth)==FALSE){
+    truth<-as.numeric(truth)-1}
+  
+  #CALCULATE EXACT AUC
+  ord<-order(probs, decreasing=TRUE)
+  probs <- probs[ord]; truth <- truth[ord]
+  
+  TPR=cumsum(truth)/max(1,sum(truth)) 
+  FPR=cumsum(!truth)/max(1,sum(!truth))
+  
+  dup<-c(probs[-1]>=probs[-length(probs)], FALSE)
+  TPR<-c(0,TPR[!dup],1); FPR<-c(0,FPR[!dup],1)
+  
+  n <- length(TPR)
+  auc<- sum( ((TPR[-1]+TPR[-n])/2) * (FPR[-1]-FPR[-n]) )
+
+  data.frame(acc,sens,spec,ppv,f1,auc)
+}
+```
+
+## Introduction
+The dataset I have chosen for this project consists of information regarding the backpack weight of 100 college-aged subjects in pounds, their respective body weight in pounds, whether or not they have back problems (0=no,1=yes), their major, year in school, sex, and how many class hours they were currently taking when filling out the survey. I chose this backpack dataset because I have always had back pain due to my heavy backpack, and I am interested to see if there are any other variables that may affect this issue.
+
+```{R}
+library(readr)
+library(tidyverse)
+Backpack <- read.csv("Backpack.csv")
+Backpack<-Backpack%>%select(-X)
+```
+
+## MANOVA 
+A one-way MANOVA was conducted to test the effect of sex on the numeric variables (back pack weight, ratio, back problems, units, and year). With a p-value of 3.89e-09, the null hypothesis that there is no significance between sex and any of the numeric variables is rejected. After running the ANOVA tests, significance between sex and back problems and sex and units was found with p-values of 0.0055 and 0.03, respectively. Two post-hoc tests were then ran showing the same p-values for sex and back problems and sex and units. A total of ten tests were performed across the MANOVA, univariate ANOVAs, and the post-hoc t-tests. The probability of having at least one type I error is 40.13%. The significance level with the bonferroni correction is 0.005 which makes the p-values for the ANOVA test between back problems and sex and the ANOVA test for units and sex no longer significant because they have values of 0.0055 and 0.03, respectively. Using the Shapiro test to test if the MANOVA assumptions were met, a p-value of 3.15e-06 for males and 0.0004 for females indicates that assumptions were violated since the null hypothesis that the assumption is met must be rejected.
+
+```{R}
+man1<-manova(cbind(BackpackWeight, Ratio, BackProblems, Units, Year)~Sex, data=Backpack)
+summary(man1)
+
+summary.aov(man1)
+
+pairwise.t.test(Backpack$BackProblems,Backpack$Sex, p.adj="none")
+pairwise.t.test(Backpack$Units,Backpack$Sex, p.adj="none")
+
+1-.95^10#probability of type 1 error
+0.05/10#Boneferroni adusted significance
+
+library(rstatix)
+
+group <- Backpack$Sex 
+DVs <- Backpack %>% select(BackpackWeight,Ratio,BackProblems, Units, Year)
+
+#Test multivariate normality for each group (null: assumption met)
+sapply(split(DVs,group), mshapiro_test)
+
+```
+
+
+##Mean Difference
+A mean difference randomization test was conducted between backpack weight and the two different sexes. The test statistic in this randomization test is 1.386. The null hypothesis that there is no difference between the backpack weight of males and females was rejected with a p-value of 0.235, so the alternative hypothesis that there is a difference between the mean values of the sexes is accepted. 
+
+```{R}
+Backpack%>%group_by(Sex)%>%summarize(mean_bp_wt=mean(BackpackWeight))%>%summarize(mean_diff=diff(mean_bp_wt))%>%glimpse
+
+rand_dist<-vector()
+for(i in 1:5000){
+new<-data.frame(bp_wt=sample(Backpack$BackpackWeight),sex=Backpack$Sex)
+rand_dist[i]<-mean(new[new$sex=="Male",]$bp_wt)-
+mean(new[new$sex=="Female",]$bp_wt)}
+
+mean(rand_dist>1.386 | rand_dist < -1.386)
+
+{hist(rand_dist,main="",ylab=""); abline(v = c(1.386,-1.386),col="red")}
+```
+
+## Linear Regression
+After regressing backpack weight on the interaction of units and sex, the mean/predicted backpack weight when there are no units being taken is 10.79lbs. For every one unit of hours being taken, the weight of the backpack increases by 0.44lbs. For every one unit increase for males, the weight of the backpack increases by 1.76lbs compared to females. The slope of units for males on backpack weight is -0.24 when the amount of hours taken is zero. Based on the graph to test the assumption of linearity, the data is not linear since there is a slight pattern shown in the between the residuals and the fitted values. The Shapiro test was used to check the assumption of normality which was violated because the p-value is 0.0005 which indicates that the null hypothesis that there is normality is rejected. The Breuch-Pagan test was used to check the assumption of homoskedasticity which was not violated because the p-value is 0.75 which indicates that the null hypothesis that there is homoskedasticity cannot be rejected. After performing the regression using robust standard errors, there was no change in significance of the intercept or the coefficients, and only slight changes were seen in the standard errors and p-values. There was a slightly large change in the t-values but nothing significantly different. 0.0322 of the variation in outcome is explained by the model, with 0.002 of variation in the outcome being explained with the adjusted value of R-squared.
+
+```{R}
+Backpack$units_c <- Backpack$Units - mean(Backpack$Units,na.rm=T)
+fit1<-lm(BackpackWeight~units_c*Sex, data=Backpack)
+summary(fit1)
+
+Backpack%>%ggplot(aes(units_c,BackpackWeight,color=Sex))+geom_smooth(method="lm")+geom_vline(xintercept=0, lty=2)
+
+
+library(lmtest)
+library(sandwich)
+resids<-fit1$residuals
+fitvals<-fit1$fitted.values
+ggplot()+geom_point(aes(fitvals,resids))+geom_hline(yintercept=0, color='red')
+shapiro.test(resids)
+bptest(fit1)
+
+coeftest(fit1, vcov=vcovHC(fit1))
+
+
+```
+
+##Bootstrapped SE
+The bootstrapped standard errors decrease slightly compared to the original and robust standard errors. There is a slight increase in the bootstrapped standard error for the interaction of units and sex which indicates that there is a slight increase in the p-value for this interaction. However, this slight increase in the p-value does not change the fact that the p-values for the original and robust standard errors are well above 0.05, so the null hypothesis that this interaction is not a significant predictor of backpack weight is still accepted.
+
+```{R}
+boot_dat<- sample_frac(Backpack, replace=T)
+# repeat 5000 times
+samp_distn<-replicate(5000, {
+boot_dat <- sample_frac(Backpack, replace=T) 
+fit2 <- lm(BackpackWeight~units_c*Sex, data=boot_dat) 
+coef(fit2) 
+})
+
+## Estimated SEs
+samp_distn %>% t %>% as.data.frame %>% summarize_all(sd)
+
+##Original SEs
+summary(fit1)
+
+## Robust SEs
+coeftest(fit1, vcov=vcovHC(fit1))
+```
+##Binary Logistic Regression
+After predicting back problems from backpack weight and units, the odds of having back problems increases by a factor of 1.04 for every one unit increase of backpack weight. For every one unit increase of class hours taken, the odds of having back problems increases by a factor of 1.15. The odds of having back problems when backpack weight and hours taken is zero is 0.037. The model is predicting with 0.68 accuracy, 0.031 sensitivity, 0.985 specificity, 0.50 precision, and an predicting overall 0.604 which is classified as poor. The AUC calculated with the ROC curve is 0.604 which indicates that the model is poor at predicting back problems from backpack weight and units taken.
+
+```{R}
+
+fit_binary<-glm(BackProblems~BackpackWeight+Units, data=Backpack,family = binomial)
+summary(fit_binary)
+
+exp(coef(fit_binary))
+
+#Confusion Matrix
+prob<-predict(fit_binary,type="response") 
+pred<-ifelse(prob>.5,1,0)
+table(predict=pred, truth=Backpack$BackProblems) %>% addmargins
+
+class_diag(prob, Backpack$BackProblems)
+
+Backpack$logit<-predict(fit_binary,type="link") #get predicted logit scores (logodds)
+
+Backpack %>% mutate(BackProblems=factor(BackProblems,levels=c("0","1"))) %>%ggplot()+geom_density(aes(logit,color=BackProblems,fill=BackProblems), alpha=.4)+
+  theme(legend.position=c(.85,.85))+geom_vline(xintercept=0)+xlab("predictor (logit)")
+
+library(plotROC)
+ROC<-ggplot(Backpack)+geom_roc(aes(d=BackProblems,m=prob), n.cuts = 0)
+ROC
+calc_auc(ROC)
+
+```
+
+##Binary Logistic Regression with All Variables
+The model is predicting with 0.77 accuracy, 0.594 sensitivity, 0.853 specificity, 0.655 precision, and predicting overall 0.888 which is classified as good. The diagnostics for the 10-fold CV is 0.64 accuracy, 0.14 sensitivity, 0.859 specificity, NaN precision, and predicting overall 0.627 which is classified as poor. The CV metrics are poor compared to the in-sample metrics. The only variable retained from LASSO was sex. The 10-fold CV using only the variable from LASSO returned an AUC of 0.6665 which is classified as poor. This LASSO AUC is similar to that from the previous CV's AUC.
+
+```{R}
+fit_binary2<-glm(BackProblems~., data=Backpack,family = binomial)
+summary(fit_binary2)
+
+#Confusion Matrix
+prob2<-predict(fit_binary2,type="response") 
+pred2<-ifelse(prob>.5,1,0)
+table(predict=pred2, truth=Backpack$BackProblems) %>% addmargins
+
+class_diag(prob2, Backpack$BackProblems)
+
+
+##CV
+set.seed(1234)
+k=10
+data <- Backpack %>% sample_frac #put rows of dataset in random order
+folds <- ntile(1:nrow(Backpack),n=10) #create fold labels
+diags<-NULL
+for(i in 1:k){
+train2 <- data[folds!=i,] #create training set (all but fold i)
+test2 <- data[folds==i,] #create test set (just fold i)
+truth2 <- test2$BackProblems #save truth labels from fold i
+fit <- glm(BackProblems~BackpackWeight+BodyWeight+Ratio+Year+Sex+Status+Units,data=train2, family="binomial")
+probs3 <- predict(fit, newdata=test2, type="response")
+diags<-rbind(diags,class_diag(probs3,truth2))
+}
+diags%>%summarize_all(mean)
+
+##LASSO
+library(glmnet)
+y<-as.matrix(Backpack$BackProblems) #grab response
+x<-model.matrix(BackProblems~.,data=Backpack)[,-1] #grab predictors
+head(x)
+
+cv<-cv.glmnet(x,y,family="binomial")
+lasso<-glmnet(x,y,family="binomial",lambda=cv$lambda.1se)
+coef(lasso)
+
+set.seed(1234)
+k=10
+data <- Backpack %>% sample_frac #put rows of dataset in random order
+folds <- ntile(1:nrow(Backpack),n=10) #create fold labels
+diags<-NULL
+for(i in 1:k){
+train <- data[folds!=i,] #create training set (all but fold i)
+test <- data[folds==i,] #create test set (just fold i)
+truth <- test$BackProblems #save truth labels from fold i
+fit <- glm(BackProblems~Sex,data=train, family="binomial")
+probs <- predict(fit, newdata=test, type="response")
+diags<-rbind(diags,class_diag(probs,truth))
+}
+diags%>%summarize_all(mean)
+```
+
+
+
+
+
+
