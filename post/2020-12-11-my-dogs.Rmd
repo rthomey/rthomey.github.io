@@ -1,0 +1,12 @@
+---
+title: My dog!
+author: ''
+date: '2020-12-11'
+slug: my-dogs
+categories: []
+tags: []
+description: ''
+---
+
+## This is my favorite picture of my dachshund, Max.
+![](/post/2020-12-11-my-dogs_files/CAAAFED5-B6D3-4E9B-B0B0-50AFBD38EB29.jpeg){width=350px height=600px}

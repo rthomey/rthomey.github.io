@@ -1,16 +1,22 @@
 ---
-title: Test Post
+title: Python
 author: ''
 date: '2020-12-04'
-slug: test-post
+slug: Python
 categories: []
 tags: []
 description: ''
 ---
 
-#Heading of my post
+#Examples of Python
 
-Content of post
+```{R}
+library(reticulate)
+quakes<-quakes
+```
 
-##subheading
-more content
+```{python}
+r.quakes.depth.min()
+r.quakes.depth.max()
+r.quakes.depth.mean()
+```
